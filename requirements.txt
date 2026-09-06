@@ -1,0 +1,7 @@
+fastapi[standard]
+huggingface_hub
+Pillow
+python-dotenv
+httpx[socks]
+pytest
+httpx
