@@ -1,7 +1,8 @@
-fastapi[standard]
-huggingface_hub
-Pillow
-python-dotenv
-httpx[socks]
-pytest
-httpx
+fastapi[standard]==0.141.1
+pydantic==2.13.5
+huggingface_hub==2.0.0
+python-dotenv==1.2.3
+pillow==12.3.0
+redis==8.1.0
+rq==2.12.0
+pytest==9.1.1

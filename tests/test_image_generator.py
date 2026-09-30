@@ -1,44 +1,50 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 from PIL import Image
+
+from app.config import settings
+from app.generator import ImageGenerator
 
 
 class TestImageGenerator:
 
-    @patch("app.services.image_generator.InferenceClient")
+    @patch("app.generator.InferenceClient")
     def test_generate_calls_text_to_image(self, mock_client_cls):
-        from app.services.image_generator import ImageGenerator
-
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         mock_client.text_to_image.return_value = Image.new("RGB", (64, 64))
 
-        gen = ImageGenerator()
-        result = gen.generate("a red square")
+        result = ImageGenerator().generate("a red square", 128, 256, 7)
 
-        mock_client.text_to_image.assert_called_once_with("a red square", model="test-model")
-        assert isinstance(result, Image.Image)
+        mock_client.text_to_image.assert_called_once_with(
+            "a red square",
+            model="test-model",
+            width=128,
+            height=256,
+            seed=7,
+        )
+        assert result.startswith(b"\x89PNG")
 
-    @patch("app.services.image_generator.InferenceClient")
-    def test_init_creates_client_with_env_vars(self, mock_client_cls):
-        import os
-        os.environ["HF_TOKEN"] = "my-token"
-        os.environ["HF_PROVIDER"] = "fal-ai"
+    @patch("app.generator.InferenceClient")
+    def test_init_creates_client_with_settings(self, mock_client_cls):
+        ImageGenerator()
 
-        from app.services.image_generator import ImageGenerator
-        gen = ImageGenerator()
+        mock_client_cls.assert_called_once_with(provider="auto", api_key="test-token")
 
-        mock_client_cls.assert_called_once_with(provider="fal-ai", api_key="my-token")
+    @patch("app.generator.InferenceClient")
+    def test_init_requires_token(self, mock_client_cls, monkeypatch):
+        monkeypatch.setattr(settings, "hf_token", None)
 
-    @patch("app.services.image_generator.InferenceClient")
-    def test_generate_returns_pil_image(self, mock_client_cls):
-        from app.services.image_generator import ImageGenerator
+        with pytest.raises(RuntimeError):
+            ImageGenerator()
 
-        expected = Image.new("RGB", (100, 100), color="green")
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-        mock_client.text_to_image.return_value = expected
+        mock_client_cls.assert_not_called()
 
-        gen = ImageGenerator()
-        result = gen.generate("describe")
+    @patch("app.generator.apply_proxy")
+    @patch("app.generator.InferenceClient")
+    def test_init_applies_proxy_before_client(self, mock_client_cls, mock_apply):
+        ImageGenerator()
 
-        assert result is expected
+        mock_apply.assert_called_once()
+        mock_client_cls.assert_called_once()

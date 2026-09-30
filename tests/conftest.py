@@ -1,25 +1,20 @@
 import os
-from unittest.mock import MagicMock, patch
+
+os.environ["HF_TOKEN"] = "test-token"
+os.environ["HF_MODEL"] = "test-model"
+os.environ["HF_PROVIDER"] = "auto"
+os.environ["DEBUG"] = "false"
+os.environ["VERSION"] = "test"
+os.environ["API_KEY"] = ""
+os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
+os.environ["RESULT_TTL"] = "86400"
 
 import pytest
-from PIL import Image
-
-os.environ.setdefault("HF_TOKEN", "test-token")
-os.environ.setdefault("HF_MODEL", "test-model")
-os.environ.setdefault("HF_PROVIDER", "auto")
-os.environ.setdefault("DEBUG", "false")
-
-
-@pytest.fixture
-def mock_image():
-    return Image.new("RGB", (64, 64), color="red")
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
 def client():
-    with patch("app.main.image_generator") as mock_gen:
-        mock_gen.generate.return_value = Image.new("RGB", (64, 64), color="red")
-        from fastapi.testclient import TestClient
-        from app.main import app
+    from app.main import app
 
-        yield TestClient(app)
+    return TestClient(app)
