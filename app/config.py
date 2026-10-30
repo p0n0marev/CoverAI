@@ -33,7 +33,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 class Settings:
-    version = _env('VERSION', '0.1.0')
+    version = _env('VERSION', '0.2.0')
     hf_model = _env('HF_MODEL', 'stable-diffusion-v1-5/stable-diffusion-v1-5')
     steps = _env_int('STEPS', 8)
     guidance = _env_float('GUIDANCE', 7.5)
