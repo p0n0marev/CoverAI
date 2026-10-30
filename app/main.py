@@ -3,13 +3,12 @@ import hmac
 import logging
 import time
 import uuid
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.responses import FileResponse
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
@@ -23,50 +22,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-DESCRIPTION = """
-Cover generation service: describe the image in text — get a PNG.
-
-### How to use
-1. Send `POST /queue` with a prompt — you get back the task's `job_id`.
-2. Poll `GET /result/{job_id}`: while generation is in progress you get a status,
-   when the task is finished — the ready `image/png` file.
-
-Generation runs asynchronously in a worker through Redis/RQ, so the
-`/queue` request does not wait for the model to finish.
-
-### Authorization
-If `API_KEY` is set in the configuration, all endpoints except `/health`
-require the header `X-API-Key: <API_KEY>`.
-
-`POST /queue` is rate-limited per API key (see `RATE_LIMIT_PER_MINUTE`).
-Finished images and job records are kept for `RESULT_TTL` seconds.
-"""
-
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    if not settings.debug and not settings.hf_token:
-        logger.warning("HF_TOKEN is empty and DEBUG is false; the worker cannot generate images")
-    yield
-
-
-app = FastAPI(
-    title='CoverAI',
-    summary='Generate covers from a text description',
-    description=DESCRIPTION,
-    version=settings.version,
-    lifespan=lifespan,
-    openapi_tags=[
-        {
-            'name': 'health',
-            'description': 'Service availability check.',
-        },
-        {
-            'name': 'images',
-            'description': 'Enqueue generation tasks and fetch their results.',
-        },
-    ],
-)
+app = FastAPI(title='CoverAI', version=settings.version)
 
 API_KEY_NAME = 'X-API-Key'
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
@@ -110,79 +66,35 @@ def finished_image_path(image_id: object) -> Path:
 
 
 class ErrorResponse(BaseModel):
-    detail: str = Field(description='Error description')
+    detail: str
 
 
 class HealthResponse(BaseModel):
-    status: str = Field(description='`ok` if the service is up')
+    status: str
 
 
 class GenerateRequest(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={
-            'example': {
-                'prompt': 'minimalist book cover, futuristic city skyline at dusk',
-                'width': 1024,
-                'height': 1024,
-                'seed': 42,
-            }
-        }
-    )
-
-    prompt: str = Field(
-        min_length=1,
-        max_length=10000,
-        description='Text description of the desired cover',
-    )
-    width: int | None = Field(
-        None,
-        ge=256,
-        le=2048,
-        description='Image width in pixels, if you want to override it',
-    )
-    height: int | None = Field(
-        None,
-        ge=256,
-        le=2048,
-        description='Image height in pixels, if you want to override it',
-    )
-    seed: int | None = Field(
-        None,
-        description='Seed for reproducible generation',
-    )
+    prompt: str = Field(min_length=1, max_length=10000)
+    steps: int | None = Field(None, ge=1, le=50)
+    guidance: float | None = Field(None, ge=0, le=20)
+    seed: int | None = None
 
 
 class QueuedResponse(BaseModel):
-    job_id: str = Field(description='Identifier of the queued task')
+    job_id: str
 
 
 JOB_STATUS_SCHEMA = {
     'type': 'object',
     'properties': {
-        'id': {'type': 'string', 'description': 'Task identifier'},
-        'status': {
-            'type': 'string',
-            'description': '`queued` or `started`',
-        },
+        'id': {'type': 'string'},
+        'status': {'type': 'string'},
     },
     'required': ['id', 'status'],
 }
 
-RESPONSES_UNAUTHORIZED = {
-    401: {
-        'description': 'Invalid or missing API key',
-        'model': ErrorResponse,
-    },
-}
 
-
-@app.get(
-    '/health',
-    tags=['health'],
-    summary='Liveness probe',
-    description='No authorization required. Suitable for Docker/Kubernetes healthchecks.',
-    response_description='Service state',
-)
+@app.get('/health', tags=['health'])
 def health() -> HealthResponse:
     return {'status': 'ok'}
 
@@ -190,17 +102,10 @@ def health() -> HealthResponse:
 @app.post(
     '/queue',
     tags=['images'],
-    summary='Enqueue a generation task',
-    description=(
-            'Pushes a task into the `images` queue. Immediately returns a `job_id`, '
-            'which can later be used to fetch the image via `GET /result/{job_id}`.'
-    ),
     response_model=QueuedResponse,
-    response_description='Identifier of the enqueued task',
     responses={
-        422: {'description': 'Request body validation error'},
-        429: {'description': 'Rate limit exceeded', 'model': ErrorResponse},
-        **RESPONSES_UNAUTHORIZED,
+        401: {'description': 'Unauthorized', 'model': ErrorResponse},
+        429: {'description': 'Too many requests', 'model': ErrorResponse},
     },
     dependencies=[Depends(auth)],
 )
@@ -213,9 +118,9 @@ def enqueue_image(
     job = queue.enqueue(
         generate_image_job,
         request.prompt,
-        request.width,
-        request.height,
         request.seed,
+        request.steps,
+        request.guidance,
         result_ttl=ttl,
         failure_ttl=ttl,
     )
@@ -227,23 +132,17 @@ def enqueue_image(
 @app.get(
     '/result/{job_id}',
     tags=['images'],
-    summary='Get the task result',
-    description=(
-            'While the task is queued or running, a JSON status is returned. '
-            'Once generation is complete, the ready PNG file is served. '
-            'Task timeout: 600 seconds. The result is kept for `RESULT_TTL` seconds.'
-    ),
     responses={
         200: {
-            'description': 'Ready image (`image/png`) or the current task status',
+            'description': 'PNG or status',
             'content': {
                 'image/png': {'schema': {'type': 'string', 'format': 'binary'}},
                 'application/json': {'schema': JOB_STATUS_SCHEMA},
             },
         },
-        404: {'description': 'No task with such id', 'model': ErrorResponse},
-        500: {'description': 'Generation failed or the file was not found', 'model': ErrorResponse},
-        **RESPONSES_UNAUTHORIZED,
+        401: {'description': 'Unauthorized', 'model': ErrorResponse},
+        404: {'description': 'Not found', 'model': ErrorResponse},
+        500: {'description': 'Failed', 'model': ErrorResponse},
     },
     dependencies=[Depends(auth)],
 )

@@ -1,4 +1,7 @@
-# CoverAI
+# CoverAI — обложки, созданные нейросетью
 
-Cover generation service: FastAPI + Redis/RQ queue + Hugging Face Inference API.
-Send a text prompt — get a PNG file.
+Сервис генерации обложек: по текстовому описанию возвращает PNG 256×256.
+
+Модель задаётся в `HF_MODEL`.
+
+`POST /queue` ставит задачу в очередь Redis и сразу отдаёт `job_id`. Воркер рисует обложку этой моделью. `GET /result/{job_id}` возвращает статус задачи или готовый файл.

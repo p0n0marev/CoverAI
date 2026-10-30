@@ -1,8 +1,5 @@
 import os
 
-os.environ["HF_TOKEN"] = "test-token"
-os.environ["HF_MODEL"] = "test-model"
-os.environ["HF_PROVIDER"] = "auto"
 os.environ["DEBUG"] = "false"
 os.environ["VERSION"] = "test"
 os.environ["API_KEY"] = ""

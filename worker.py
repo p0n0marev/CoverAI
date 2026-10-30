@@ -1,9 +1,8 @@
 import logging
-import sys
 
 from rq import Worker
 
-from app.config import apply_proxy, settings
+from app.config import settings
 from app.jobs import queue
 
 logging.basicConfig(
@@ -14,13 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    if settings.proxy:
-        apply_proxy()
-        logger.info("HTTP proxy enabled")
-    if not settings.debug and not settings.hf_token:
-        logger.error("HF_TOKEN is required when DEBUG is false")
-        sys.exit(1)
-    logger.info("Starting worker on queue 'images'")
+    logger.info("Starting worker on queue 'images', model=%s", settings.hf_model)
     Worker([queue], connection=queue.connection).work()
 
 
